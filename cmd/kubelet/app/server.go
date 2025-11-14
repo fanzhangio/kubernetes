@@ -830,8 +830,9 @@ func run(ctx context.Context, s *options.KubeletServer, kubeDeps *kubelet.Depend
 		if utilfeature.DefaultFeatureGate.Enabled(features.TopologyManagerPolicyOptions) {
 			topologyManagerPolicyOptions = s.TopologyManagerPolicyOptions
 		} else if s.TopologyManagerPolicyOptions != nil {
-			return fmt.Errorf("topology manager policy options %v require feature gates %q enabled",
-				s.TopologyManagerPolicyOptions, features.TopologyManagerPolicyOptions)
+			// Allow stable topology manager policy options even when the feature gate is disabled
+			// Only check availability for each option individually
+			topologyManagerPolicyOptions = s.TopologyManagerPolicyOptions
 		}
 		if utilfeature.DefaultFeatureGate.Enabled(features.NodeSwap) {
 			if !kubeletutil.IsCgroup2UnifiedMode() && s.MemorySwap.SwapBehavior == string(kubelettypes.LimitedSwap) {
