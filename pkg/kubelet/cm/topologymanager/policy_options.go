@@ -19,6 +19,7 @@ package topologymanager
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -29,6 +30,7 @@ import (
 const (
 	PreferClosestNUMANodes string = "prefer-closest-numa-nodes"
 	MaxAllowableNUMANodes  string = "max-allowable-numa-nodes"
+	AllowedNUMANodes       string = "allowed-numa-nodes"
 )
 
 var (
@@ -38,6 +40,7 @@ var (
 	)
 	stableOptions = sets.New[string](
 		PreferClosestNUMANodes,
+		AllowedNUMANodes,
 	)
 )
 
@@ -60,6 +63,7 @@ func CheckPolicyOptionAvailable(option string) error {
 type PolicyOptions struct {
 	PreferClosestNUMA     bool
 	MaxAllowableNUMANodes int
+	AllowedNUMANodes      []int
 }
 
 func NewPolicyOptions(policyOptions map[string]string) (PolicyOptions, error) {
@@ -95,6 +99,37 @@ func NewPolicyOptions(policyOptions map[string]string) (PolicyOptions, error) {
 				klog.InfoS("WARNING: the value of max-allowable-numa-nodes is more than the default recommended value", "max-allowable-numa-nodes", optValue, "defaultMaxAllowableNUMANodes", defaultMaxAllowableNUMANodes)
 			}
 			opts.MaxAllowableNUMANodes = optValue
+		case AllowedNUMANodes:
+			// Parse comma-separated list of NUMA node IDs, e.g., "0,1" or "0,1,2,3"
+			if value == "" {
+				return opts, fmt.Errorf("empty value for option %q", name)
+			}
+			nodeStrings := strings.Split(value, ",")
+			allowedNodes := make([]int, 0, len(nodeStrings))
+			seenNodes := make(map[int]bool)
+			
+			for _, nodeStr := range nodeStrings {
+				nodeStr = strings.TrimSpace(nodeStr)
+				nodeID, err := strconv.Atoi(nodeStr)
+				if err != nil {
+					return opts, fmt.Errorf("invalid NUMA node ID %q in option %q: %w", nodeStr, name, err)
+				}
+				if nodeID < 0 {
+					return opts, fmt.Errorf("NUMA node ID must be non-negative, got %d in option %q", nodeID, name)
+				}
+				if seenNodes[nodeID] {
+					return opts, fmt.Errorf("duplicate NUMA node ID %d in option %q", nodeID, name)
+				}
+				seenNodes[nodeID] = true
+				allowedNodes = append(allowedNodes, nodeID)
+			}
+			
+			if len(allowedNodes) == 0 {
+				return opts, fmt.Errorf("at least one NUMA node must be specified in option %q", name)
+			}
+			
+			opts.AllowedNUMANodes = allowedNodes
+			klog.InfoS("Filtering NUMA nodes to allowed list", "allowed-numa-nodes", allowedNodes)
 		default:
 			// this should never be reached, we already detect unknown options,
 			// but we keep it as further safety.

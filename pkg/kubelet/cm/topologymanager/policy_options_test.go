@@ -138,6 +138,54 @@ func TestNewTopologyManagerOptions(t *testing.T) {
 			},
 			expectedErr: fmt.Errorf("topology manager policy alpha-level options not enabled,"),
 		},
+		{
+			description: "return TopologyManagerOptions with AllowedNUMANodes set to 0,1",
+			expectedOptions: PolicyOptions{
+				MaxAllowableNUMANodes: 8,
+				AllowedNUMANodes:      []int{0, 1},
+			},
+			policyOptions: map[string]string{
+				AllowedNUMANodes: "0,1",
+			},
+		},
+		{
+			description: "return TopologyManagerOptions with AllowedNUMANodes set to multiple nodes",
+			expectedOptions: PolicyOptions{
+				MaxAllowableNUMANodes: 8,
+				AllowedNUMANodes:      []int{0, 2, 4, 6},
+			},
+			policyOptions: map[string]string{
+				AllowedNUMANodes: "0,2,4,6",
+			},
+		},
+		{
+			description: "fail to parse AllowedNUMANodes with invalid node ID",
+			policyOptions: map[string]string{
+				AllowedNUMANodes: "0,abc",
+			},
+			expectedErr: fmt.Errorf("invalid NUMA node ID"),
+		},
+		{
+			description: "fail to parse AllowedNUMANodes with negative node ID",
+			policyOptions: map[string]string{
+				AllowedNUMANodes: "0,-1",
+			},
+			expectedErr: fmt.Errorf("NUMA node ID must be non-negative"),
+		},
+		{
+			description: "fail to parse AllowedNUMANodes with duplicate node ID",
+			policyOptions: map[string]string{
+				AllowedNUMANodes: "0,1,0",
+			},
+			expectedErr: fmt.Errorf("duplicate NUMA node ID"),
+		},
+		{
+			description: "fail to parse AllowedNUMANodes with empty value",
+			policyOptions: map[string]string{
+				AllowedNUMANodes: "",
+			},
+			expectedErr: fmt.Errorf("empty value for option"),
+		},
 	}
 
 	betaOptions.Insert(fancyBetaOption)
@@ -156,11 +204,30 @@ func TestNewTopologyManagerOptions(t *testing.T) {
 				return
 			}
 
-			if opts != tcase.expectedOptions {
-				t.Errorf("Expected TopologyManagerOptions to equal %v, not %v", tcase.expectedOptions, opts)
+			// Compare fields individually to handle slice comparison
+			if opts.PreferClosestNUMA != tcase.expectedOptions.PreferClosestNUMA {
+				t.Errorf("Expected PreferClosestNUMA to equal %v, not %v", tcase.expectedOptions.PreferClosestNUMA, opts.PreferClosestNUMA)
+			}
+			if opts.MaxAllowableNUMANodes != tcase.expectedOptions.MaxAllowableNUMANodes {
+				t.Errorf("Expected MaxAllowableNUMANodes to equal %v, not %v", tcase.expectedOptions.MaxAllowableNUMANodes, opts.MaxAllowableNUMANodes)
+			}
+			if !intSlicesEqual(opts.AllowedNUMANodes, tcase.expectedOptions.AllowedNUMANodes) {
+				t.Errorf("Expected AllowedNUMANodes to equal %v, not %v", tcase.expectedOptions.AllowedNUMANodes, opts.AllowedNUMANodes)
 			}
 		})
 	}
+}
+
+func intSlicesEqual(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestPolicyDefaultsAvailable(t *testing.T) {

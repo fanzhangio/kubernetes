@@ -33,7 +33,21 @@ type NUMAInfo struct {
 func NewNUMAInfo(topology []cadvisorapi.Node, opts PolicyOptions) (*NUMAInfo, error) {
 	var numaNodes []int
 	distances := map[int][]uint64{}
+	
+	// Build a set of allowed NUMA nodes for quick lookup
+	allowedNodes := make(map[int]bool)
+	if len(opts.AllowedNUMANodes) > 0 {
+		for _, nodeID := range opts.AllowedNUMANodes {
+			allowedNodes[nodeID] = true
+		}
+	}
+	
 	for _, node := range topology {
+		// If AllowedNUMANodes is specified, only include nodes in the allowed list
+		if len(opts.AllowedNUMANodes) > 0 && !allowedNodes[node.Id] {
+			continue
+		}
+		
 		numaNodes = append(numaNodes, node.Id)
 
 		var nodeDistance []uint64
@@ -44,6 +58,16 @@ func NewNUMAInfo(topology []cadvisorapi.Node, opts PolicyOptions) (*NUMAInfo, er
 			}
 		}
 		distances[node.Id] = nodeDistance
+	}
+	
+	// Validate that all allowed NUMA nodes were found in the topology
+	if len(opts.AllowedNUMANodes) > 0 {
+		if len(numaNodes) == 0 {
+			return nil, fmt.Errorf("no NUMA nodes found matching allowed-numa-nodes list: %v", opts.AllowedNUMANodes)
+		}
+		if len(numaNodes) != len(opts.AllowedNUMANodes) {
+			return nil, fmt.Errorf("some NUMA nodes from allowed-numa-nodes list were not found in system topology. Requested: %v, Found: %v", opts.AllowedNUMANodes, numaNodes)
+		}
 	}
 
 	numaInfo := &NUMAInfo{

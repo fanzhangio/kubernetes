@@ -445,6 +445,96 @@ func TestNUMAInfo(t *testing.T) {
 				PreferClosestNUMA: true,
 			},
 		},
+		{
+			name: "filter to allowed NUMA nodes 0,1 from 4 nodes",
+			topology: []cadvisorapi.Node{
+				{
+					Id: 0,
+				},
+				{
+					Id: 1,
+				},
+				{
+					Id: 2,
+				},
+				{
+					Id: 3,
+				},
+			},
+			expectedNUMAInfo: &NUMAInfo{
+				Nodes: []int{0, 1},
+				NUMADistances: NUMADistances{
+					0: nil,
+					1: nil,
+				},
+			},
+			opts: PolicyOptions{
+				AllowedNUMANodes: []int{0, 1},
+			},
+		},
+		{
+			name: "filter to allowed NUMA nodes 0,1 from many nodes including empty ones",
+			topology: []cadvisorapi.Node{
+				{
+					Id: 0,
+				},
+				{
+					Id: 1,
+				},
+				{
+					Id: 2,
+				},
+				{
+					Id: 3,
+				},
+				{
+					Id: 4,
+				},
+				{
+					Id: 5,
+				},
+			},
+			expectedNUMAInfo: &NUMAInfo{
+				Nodes: []int{0, 1},
+				NUMADistances: NUMADistances{
+					0: nil,
+					1: nil,
+				},
+			},
+			opts: PolicyOptions{
+				AllowedNUMANodes: []int{0, 1},
+			},
+		},
+		{
+			name: "error when allowed NUMA node not found in topology",
+			topology: []cadvisorapi.Node{
+				{
+					Id: 0,
+				},
+				{
+					Id: 1,
+				},
+			},
+			expectedErr: fmt.Errorf("some NUMA nodes from allowed-numa-nodes list were not found"),
+			opts: PolicyOptions{
+				AllowedNUMANodes: []int{0, 1, 5},
+			},
+		},
+		{
+			name: "error when no allowed NUMA nodes found",
+			topology: []cadvisorapi.Node{
+				{
+					Id: 0,
+				},
+				{
+					Id: 1,
+				},
+			},
+			expectedErr: fmt.Errorf("no NUMA nodes found matching allowed-numa-nodes list"),
+			opts: PolicyOptions{
+				AllowedNUMANodes: []int{5, 6},
+			},
+		},
 	}
 
 	for _, tcase := range tcases {
