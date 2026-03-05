@@ -48,6 +48,10 @@ func (m *mockAffinityStore) Name() string {
 	return "container"
 }
 
+func (m *mockAffinityStore) GetNUMANodeIDs() []int {
+	return nil
+}
+
 func makeNUMADevice(id string, numa int) *pluginapi.Device {
 	return &pluginapi.Device{
 		ID:       id,
