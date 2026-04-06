@@ -20,6 +20,7 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -94,6 +95,11 @@ type ManagerImpl struct {
 
 	// List of NUMA Nodes available on the underlying machine
 	numaNodes []int
+	// NUMA nodes with CPUs attached. Used to project device-only NUMA topologies
+	// onto the scheduling NUMA universe on large asymmetric systems.
+	cpuNUMANodes []int
+	// Distances between all discovered NUMA nodes, keyed by NUMA node ID.
+	numaDistances map[int][]uint64
 
 	// Store of Topology Affinities that the Device Manager can query.
 	topologyAffinityStore topologymanager.Store
@@ -144,8 +150,17 @@ func newManagerImpl(logger klog.Logger, socketPath string, topology []cadvisorap
 	logger.V(2).Info("Creating Device Plugin manager", "path", socketPath)
 
 	var numaNodes []int
+	var cpuNUMANodes []int
+	numaDistances := make(map[int][]uint64, len(topology))
 	for _, node := range topology {
 		numaNodes = append(numaNodes, node.Id)
+		numaDistances[node.Id] = node.Distances
+		if len(node.Cores) > 0 {
+			cpuNUMANodes = append(cpuNUMANodes, node.Id)
+		}
+	}
+	if len(cpuNUMANodes) == 0 {
+		cpuNUMANodes = append(cpuNUMANodes, numaNodes...)
 	}
 
 	manager := &ManagerImpl{
@@ -157,6 +172,8 @@ func newManagerImpl(logger klog.Logger, socketPath string, topology []cadvisorap
 		allocatedDevices:      make(map[string]sets.Set[string]),
 		podDevices:            newPodDevices(),
 		numaNodes:             numaNodes,
+		cpuNUMANodes:          cpuNUMANodes,
+		numaDistances:         numaDistances,
 		topologyAffinityStore: topologyAffinityStore,
 		devicesToReuse:        make(PodReusableDevices),
 		update:                make(chan resourceupdates.Update, 100),
@@ -185,6 +202,51 @@ func newManagerImpl(logger klog.Logger, socketPath string, topology []cadvisorap
 
 func (m *ManagerImpl) Updates() <-chan resourceupdates.Update {
 	return m.update
+}
+
+func (m *ManagerImpl) projectToCPUNUMANodes(rawNUMANodes []int) []int {
+	if len(rawNUMANodes) == 0 || len(m.cpuNUMANodes) == 0 {
+		return rawNUMANodes
+	}
+
+	cpuNUMANodes := sets.New[int](m.cpuNUMANodes...)
+	projected := sets.New[int]()
+	for _, nodeID := range rawNUMANodes {
+		if cpuNUMANodes.Has(nodeID) {
+			projected.Insert(nodeID)
+			continue
+		}
+
+		distances, ok := m.numaDistances[nodeID]
+		if !ok || len(distances) == 0 {
+			projected.Insert(m.cpuNUMANodes...)
+			continue
+		}
+
+		minDistance := uint64(math.MaxUint64)
+		closestCPUNodes := make([]int, 0, len(m.cpuNUMANodes))
+		for _, cpuNodeID := range m.cpuNUMANodes {
+			if cpuNodeID < 0 || cpuNodeID >= len(distances) {
+				continue
+			}
+			distance := distances[cpuNodeID]
+			if distance < minDistance {
+				minDistance = distance
+				closestCPUNodes = []int{cpuNodeID}
+				continue
+			}
+			if distance == minDistance {
+				closestCPUNodes = append(closestCPUNodes, cpuNodeID)
+			}
+		}
+		if len(closestCPUNodes) == 0 {
+			projected.Insert(m.cpuNUMANodes...)
+			continue
+		}
+		projected.Insert(closestCPUNodes...)
+	}
+
+	return sets.List(projected)
 }
 
 // CleanupPluginDirectory is to remove all existing unix sockets
@@ -748,7 +810,8 @@ func (m *ManagerImpl) filterByAffinity(podUID, contName, resource string, availa
 	// to a list of NUMA Nodes for the fake NUMANode -1.
 	perNodeDevices := make(map[int]sets.Set[string])
 	for d := range available {
-		if m.allDevices[resource][d].Topology == nil || len(m.allDevices[resource][d].Topology.Nodes) == 0 {
+		numaNodeIDs := m.getNUMANodeIds(m.allDevices[resource][d].Topology)
+		if len(numaNodeIDs) == 0 {
 			if _, ok := perNodeDevices[nodeWithoutTopology]; !ok {
 				perNodeDevices[nodeWithoutTopology] = sets.New[string]()
 			}
@@ -756,11 +819,11 @@ func (m *ManagerImpl) filterByAffinity(podUID, contName, resource string, availa
 			continue
 		}
 
-		for _, node := range m.allDevices[resource][d].Topology.Nodes {
-			if _, ok := perNodeDevices[int(node.ID)]; !ok {
-				perNodeDevices[int(node.ID)] = sets.New[string]()
+		for _, nodeID := range numaNodeIDs {
+			if _, ok := perNodeDevices[nodeID]; !ok {
+				perNodeDevices[nodeID] = sets.New[string]()
 			}
-			perNodeDevices[int(node.ID)].Insert(d)
+			perNodeDevices[nodeID].Insert(d)
 		}
 	}
 

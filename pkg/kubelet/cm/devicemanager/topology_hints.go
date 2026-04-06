@@ -218,15 +218,61 @@ func (m *ManagerImpl) generateDeviceTopologyHints(resource string, available set
 	return hints
 }
 
+func (m *ManagerImpl) candidateNUMANodes(resource string, available sets.Set[string], reusable sets.Set[string]) []int {
+	nodesWithDevices := sets.New[int]()
+
+	addNodes := func(deviceIDs sets.Set[string]) {
+		if deviceIDs == nil {
+			return
+		}
+		for deviceID := range deviceIDs {
+			device, ok := m.allDevices[resource][deviceID]
+			if !ok || device.Topology == nil {
+				continue
+			}
+			for _, nodeID := range m.getNUMANodeIds(device.Topology) {
+				nodesWithDevices.Insert(nodeID)
+			}
+		}
+	}
+
+	addNodes(available)
+	addNodes(reusable)
+
+	// If no nodes were identified from available or reusable devices, fall back to any node that
+	// has topology information for the resource to preserve the previous behaviour.
+	if nodesWithDevices.Len() == 0 {
+		for _, device := range m.allDevices[resource] {
+			if device.Topology == nil {
+				continue
+			}
+			for _, nodeID := range m.getNUMANodeIds(device.Topology) {
+				nodesWithDevices.Insert(nodeID)
+			}
+		}
+	}
+
+	return sets.List(nodesWithDevices)
+}
+
+func hintListContainsMask(hints []topologymanager.TopologyHint, mask bitmask.BitMask) bool {
+	for i := range hints {
+		if hints[i].NUMANodeAffinity != nil && hints[i].NUMANodeAffinity.IsEqual(mask) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *ManagerImpl) getNUMANodeIds(topology *pluginapi.TopologyInfo) []int {
 	if topology == nil {
 		return nil
 	}
-	var ids []int
+	var rawNUMANodes []int
 	for _, n := range topology.Nodes {
-		ids = append(ids, int(n.ID))
+		rawNUMANodes = append(rawNUMANodes, int(n.ID))
 	}
-	return ids
+	return m.projectToCPUNUMANodes(rawNUMANodes)
 }
 
 func (m *ManagerImpl) getPodDeviceRequest(pod *v1.Pod) map[string]int {
