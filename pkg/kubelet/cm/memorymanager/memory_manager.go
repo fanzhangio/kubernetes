@@ -508,6 +508,10 @@ func GetReservedMemoryNUMANodes(machineInfo *cadvisorapi.MachineInfo, nodeAlloca
 	return reservedNUMANodes, nil
 }
 
+// isNodeMemoryFullyReserved reports whether all allocatable memory on a NUMA
+// node is covered by --reserved-memory.  A node with zero memory and no
+// hugepages (e.g. CPU-less GPU-memory NUMA nodes on NVIDIA GB200) is
+// considered fully reserved because there is nothing left for workloads.
 func isNodeMemoryFullyReserved(node cadvisorapi.Node, systemReserved systemReservedMemory) bool {
 	var hugepagesCapacity uint64
 	for _, hugepage := range node.HugePages {

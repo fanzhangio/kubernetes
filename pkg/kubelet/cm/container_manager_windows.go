@@ -141,6 +141,11 @@ func NewContainerManager(ctx context.Context, mountUtil mount.Interface, cadviso
 	cm.memoryManager = memorymanager.NewFakeManager(logger)
 	topology := machineInfo.Topology
 
+	if zeroMemNodes := getZeroMemoryNUMANodes(topology); len(zeroMemNodes) > 0 {
+		logger.Info("Excluding zero-memory NUMA nodes from topology hints", "numaNodes", zeroMemNodes)
+		topology = filterNUMATopology(topology, zeroMemNodes)
+	}
+
 	if utilfeature.DefaultFeatureGate.Enabled(kubefeatures.WindowsCPUAndMemoryAffinity) {
 		if nodeConfig.MemoryManagerPolicy != "None" {
 			reservedNUMANodes, err := memorymanager.GetReservedMemoryNUMANodes(machineInfo, cm.GetNodeAllocatableReservation(), nodeConfig.MemoryManagerReservedMemory)

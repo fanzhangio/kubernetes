@@ -17,6 +17,8 @@ limitations under the License.
 package cm
 
 import (
+	"sort"
+
 	cadvisorapi "github.com/google/cadvisor/info/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
@@ -34,4 +36,33 @@ func filterNUMATopology(topology []cadvisorapi.Node, excludedNUMANodes []int) []
 		}
 	}
 	return filtered
+}
+
+// getZeroMemoryNUMANodes returns NUMA node IDs that have zero allocatable
+// memory (regular + hugepages).  These nodes carry no resources workloads
+// can use and should be excluded from topology hint iteration regardless
+// of the memory-manager policy to avoid O(2^n) combinatorial blowup on
+// large-NUMA platforms such as the NVIDIA GB200 (34 OS-visible NUMA nodes,
+// most with zero memory).
+func getZeroMemoryNUMANodes(topology []cadvisorapi.Node) []int {
+	var zeroNodes []int
+	for _, node := range topology {
+		if nodeHasZeroMemory(node) {
+			zeroNodes = append(zeroNodes, node.Id)
+		}
+	}
+	sort.Ints(zeroNodes)
+	return zeroNodes
+}
+
+func nodeHasZeroMemory(node cadvisorapi.Node) bool {
+	if node.Memory > 0 {
+		return false
+	}
+	for _, hp := range node.HugePages {
+		if hp.NumPages > 0 {
+			return false
+		}
+	}
+	return true
 }

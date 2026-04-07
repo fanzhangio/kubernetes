@@ -22,6 +22,7 @@ import (
 	"sort"
 	"testing"
 
+	cadvisorapi "github.com/google/cadvisor/info/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,7 +34,8 @@ import (
 )
 
 type mockAffinityStore struct {
-	hint topologymanager.TopologyHint
+	hint      topologymanager.TopologyHint
+	numaNodes []int
 }
 
 func (m *mockAffinityStore) GetAffinity(podUID string, containerName string) topologymanager.TopologyHint {
@@ -49,7 +51,7 @@ func (m *mockAffinityStore) Name() string {
 }
 
 func (m *mockAffinityStore) GetNUMANodeIDs() []int {
-	return nil
+	return m.numaNodes
 }
 
 func makeNUMADevice(id string, numa int) *pluginapi.Device {
@@ -430,7 +432,7 @@ func TestTopologyAlignedAllocation(t *testing.T) {
 			podDevices:            newPodDevices(),
 			sourcesReady:          &sourcesReadyStub{},
 			activePods:            func() []*v1.Pod { return []*v1.Pod{} },
-			topologyAffinityStore: &mockAffinityStore{tc.hint},
+			topologyAffinityStore: &mockAffinityStore{hint: tc.hint},
 		}
 
 		m.allDevices[tc.resource] = make(DeviceInstances)
@@ -620,7 +622,7 @@ func TestGetPreferredAllocationParameters(t *testing.T) {
 			podDevices:            newPodDevices(),
 			sourcesReady:          &sourcesReadyStub{},
 			activePods:            func() []*v1.Pod { return []*v1.Pod{} },
-			topologyAffinityStore: &mockAffinityStore{tc.hint},
+			topologyAffinityStore: &mockAffinityStore{hint: tc.hint},
 		}
 
 		m.allDevices[tc.resource] = make(DeviceInstances)
@@ -1695,5 +1697,47 @@ func getPodScopeTestCases() []topologyHintTestCase {
 				},
 			},
 		},
+	}
+}
+
+func TestNewManagerImplUsesTopologyManagerNUMANodes(t *testing.T) {
+	logger, _ := ktesting.NewTestContext(t)
+
+	fullTopology := []cadvisorapi.Node{
+		{Id: 0}, {Id: 1}, {Id: 2}, {Id: 3},
+	}
+
+	tests := []struct {
+		name          string
+		store         topologymanager.Store
+		expectedNUMAs []int
+	}{
+		{
+			name:          "uses GetNUMANodeIDs when store provides filtered nodes",
+			store:         &mockAffinityStore{numaNodes: []int{0, 1}},
+			expectedNUMAs: []int{0, 1},
+		},
+		{
+			name:          "falls back to topology when GetNUMANodeIDs returns nil",
+			store:         &mockAffinityStore{numaNodes: nil},
+			expectedNUMAs: []int{0, 1, 2, 3},
+		},
+		{
+			name:          "falls back to topology when store is nil",
+			store:         nil,
+			expectedNUMAs: []int{0, 1, 2, 3},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, err := newManagerImpl(logger, t.TempDir(), fullTopology, tc.store)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(mgr.numaNodes, tc.expectedNUMAs) {
+				t.Errorf("expected numaNodes %v, got %v", tc.expectedNUMAs, mgr.numaNodes)
+			}
+		})
 	}
 }

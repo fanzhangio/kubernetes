@@ -395,6 +395,49 @@ func TestGetReservedMemoryNUMANodes(t *testing.T) {
 	}
 }
 
+func TestGetReservedMemoryNUMANodesZeroMemory(t *testing.T) {
+	machineInfo := cadvisorapi.MachineInfo{
+		Topology: []cadvisorapi.Node{
+			{
+				Id:     0,
+				Memory: 10 * gb,
+				HugePages: []cadvisorapi.HugePagesInfo{
+					{PageSize: pageSize1Gb, NumPages: 5},
+				},
+			},
+			{
+				Id:     1,
+				Memory: 10 * gb,
+				HugePages: []cadvisorapi.HugePagesInfo{
+					{PageSize: pageSize1Gb, NumPages: 5},
+				},
+			},
+			{Id: 2, Memory: 0},
+			{Id: 3, Memory: 0},
+		},
+	}
+
+	reservedNodes, err := GetReservedMemoryNUMANodes(
+		&machineInfo,
+		v1.ResourceList{
+			v1.ResourceMemory: *resource.NewQuantity(5*gb, resource.BinarySI),
+			hugepages1G:       *resource.NewQuantity(5*gb, resource.BinarySI),
+		},
+		[]kubeletconfig.MemoryReservation{
+			{
+				NumaNode: 0,
+				Limits: v1.ResourceList{
+					v1.ResourceMemory: *resource.NewQuantity(5*gb, resource.BinarySI),
+					hugepages1G:       *resource.NewQuantity(5*gb, resource.BinarySI),
+				},
+			},
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, []int{0, 2, 3}, reservedNodes,
+		"nodes with zero memory should be treated as fully reserved without explicit --reserved-memory entries")
+}
+
 func TestConvertPreReserved(t *testing.T) {
 	machineInfo := cadvisorapi.MachineInfo{
 		Topology: []cadvisorapi.Node{

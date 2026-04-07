@@ -296,6 +296,18 @@ func NewContainerManager(ctx context.Context, mountUtil mount.Interface, cadviso
 	}
 
 	topology := machineInfo.Topology
+
+	// Exclude NUMA nodes with zero allocatable memory unconditionally.
+	// These nodes carry no workload-usable resources and including them
+	// causes O(2^n) hint enumeration on large-NUMA platforms (e.g. NVIDIA
+	// GB200 with 34 OS-visible NUMA nodes where most have zero memory).
+	if zeroMemNodes := getZeroMemoryNUMANodes(topology); len(zeroMemNodes) > 0 {
+		logger.Info("Excluding zero-memory NUMA nodes from topology hints", "numaNodes", zeroMemNodes)
+		topology = filterNUMATopology(topology, zeroMemNodes)
+	}
+
+	// Additionally exclude NUMA nodes whose memory is fully reserved via
+	// --reserved-memory when the memory manager is active.
 	if nodeConfig.MemoryManagerPolicy != "None" {
 		reservedNUMANodes, err := memorymanager.GetReservedMemoryNUMANodes(machineInfo, cm.GetNodeAllocatableReservation(), nodeConfig.MemoryManagerReservedMemory)
 		if err != nil {
